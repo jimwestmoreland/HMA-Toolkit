@@ -1,0 +1,30 @@
+# Ignore all zip files
+*.zip
+
+# Logs and output files
+*.log
+*.csv
+*.html
+
+# Archived/deprecated scripts
+archive/
+
+# Results folder - diagnostic outputs
+Results/
+
+# Ignore script text copies for email
+*.ps1.txt
+*.txt
+
+# Local-only files (not shared in repo)
+HMA-Troubleshooting-Chat-Transcript.md
+HMA-Diagnostics-20260125-204118.txt
+README-Email.html
+HMA-Troubleshooting-Action-Plan-Email.html
+
+# Windows system files
+Thumbs.db
+Desktop.ini
+
+# VS Code settings (optional - remove if you want to share)
+.vscode/
