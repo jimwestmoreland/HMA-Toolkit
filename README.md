@@ -19,6 +19,35 @@ Intermittent authentication failures on mobile Outlook clients when connecting t
 
 ---
 
+## About Test-HmaEasNoEmptyBearer.ps1
+
+This script is an alternative to the Microsoft-published [Test-OAuthConnectivity](https://learn.microsoft.com/en-us/exchange/troubleshoot/administration/test-oauth-authentication-is-failing) cmdlet and the community [Test-HmaEas.ps1](https://github.com/mikepfeiffer/Test-HmaEas) script.
+
+### Why a Different Approach?
+
+| Original Approach | This Script's Approach |
+|-------------------|------------------------|
+| Sends an **empty bearer token** to trigger a 401 response | Acquires a **real OAuth token** from Azure AD first |
+| Parses the `WWW-Authenticate` header to discover OAuth endpoints | Uses known Azure AD endpoints directly |
+| Fails if the environment blocks empty bearer tokens | Works in restricted environments |
+| No MFA support | **Supports MFA** via `-UseDeviceCode` switch |
+
+### When to Use This Script
+
+- Your environment **blocks empty bearer token requests** (security policy)
+- The Remote Connectivity Analyzer test fails with connection reset errors
+- `Test-OAuthConnectivity` or `Test-HmaEas.ps1` fail unexpectedly
+- The user account has **MFA enabled** (use `-UseDeviceCode`)
+- You need to test with a **federated (ADFS) domain** (use `-UseDeviceCode`)
+
+### Related Resources
+
+- [Microsoft Docs: Configure OAuth for Exchange Hybrid](https://learn.microsoft.com/en-us/exchange/configure-oauth-authentication-between-exchange-and-exchange-online-organizations-exchange-2013-help)
+- [Microsoft Docs: Test-OAuthConnectivity](https://learn.microsoft.com/en-us/powershell/module/exchange/test-oauthconnectivity)
+- [Test-HmaEas.ps1 (Original)](https://github.com/mikepfeiffer/Test-HmaEas) - Mike Pfeiffer's original HMA test script
+
+---
+
 ## Troubleshooting Flow
 
 ```
