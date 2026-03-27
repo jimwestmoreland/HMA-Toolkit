@@ -1,6 +1,8 @@
 # HMA Troubleshooting Toolkit
 
-PowerShell scripts for diagnosing Hybrid Modern Authentication (HMA) issues with Exchange On-Premises and Outlook mobile clients.
+PowerShell scripts for diagnosing Hybrid Modern Authentication (HMA) issues in Exchange Hybrid deployments where mailboxes reside on-premises but authentication flows through Azure AD.
+
+> **Note:** These tools are designed for **hybrid** scenarios only. They are not applicable to pure Exchange Online (cloud-only) or pure Exchange On-Premises (no Azure AD integration) environments.
 
 ## Problem Addressed
 
