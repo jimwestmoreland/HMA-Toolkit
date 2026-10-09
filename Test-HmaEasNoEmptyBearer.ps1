@@ -437,6 +437,39 @@ function Write-TestResult {
     }
 }
 
+function Assert-OAuthTokenResponse {
+    param(
+        [AllowNull()]
+        [object]$Response,
+        [string]$TokenEndpoint
+    )
+
+    $responseType = if ($null -eq $Response) { "null" } else { $Response.GetType().FullName }
+    if ($Response -isnot [System.Collections.IDictionary] -and $Response -isnot [PSCustomObject]) {
+        throw "Invalid OAuth token response from $TokenEndpoint (response type: $responseType). Expected a JSON object containing access_token, token_type, and expires_in. Check for proxy, SSL inspection, or sign-in page interception. Response body omitted to protect credentials and tokens."
+    }
+
+    if ($Response.error) {
+        throw "OAuth token endpoint returned an error: $($Response.error): $($Response.error_description)"
+    }
+
+    $invalidFields = @()
+    if ($Response.access_token -isnot [string] -or [string]::IsNullOrWhiteSpace($Response.access_token)) {
+        $invalidFields += "access_token (expected a non-empty string)"
+    }
+    if ($Response.token_type -isnot [string] -or $Response.token_type -ine "Bearer") {
+        $invalidFields += "token_type (expected Bearer)"
+    }
+    $expiresIn = 0L
+    if (-not [long]::TryParse([string]$Response.expires_in, [ref]$expiresIn) -or $expiresIn -le 0) {
+        $invalidFields += "expires_in (expected positive seconds)"
+    }
+
+    if ($invalidFields.Count -gt 0) {
+        throw "Invalid OAuth token response from $TokenEndpoint (response type: $responseType). Missing or invalid fields: $($invalidFields -join ', '). Check for proxy, SSL inspection, or sign-in page interception. Response body omitted to protect credentials and tokens."
+    }
+}
+
 function Get-OAuthToken {
     param(
         [string]$TenantId,
@@ -470,6 +503,7 @@ function Get-OAuthToken {
     try {
         Write-Log "Sending token request..." -Level "DEBUG"
         $response = Invoke-RestMethod -Uri $tokenEndpoint -Method POST -Body $body -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+        Assert-OAuthTokenResponse -Response $response -TokenEndpoint $tokenEndpoint
         
         Write-TestResult -TestName "Token Acquisition" -Status "Success" -Message "Successfully acquired OAuth token" -Details "Token type: $($response.token_type), Expires in: $($response.expires_in) seconds"
         
@@ -648,6 +682,7 @@ function Get-OAuthTokenDeviceCode {
             
             try {
                 $tokenResponse = Invoke-RestMethod -Uri $tokenEndpoint -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+                Assert-OAuthTokenResponse -Response $tokenResponse -TokenEndpoint $tokenEndpoint
                 $authenticated = $true
                 Write-Host "`n  Authentication successful!" -ForegroundColor Green
                 Write-Log "Device code authentication successful" -Level "INFO"
@@ -677,7 +712,13 @@ function Get-OAuthTokenDeviceCode {
                 }
                 else {
                     Write-DetailedError -ErrorRecord $_ -Context "Device Code Token Polling"
-                    return @{ Success = $false; Error = $errorBody.error_description }
+                    $errorMessage = if ($errorBody.error_description) {
+                        "$($errorBody.error): $($errorBody.error_description)"
+                    } else {
+                        $_.Exception.Message
+                    }
+                    Write-TestResult -TestName "Token Acquisition (Device Code)" -Status "Error" -Message "Failed to acquire token" -Details $errorMessage
+                    return @{ Success = $false; Error = $errorMessage }
                 }
             }
         }

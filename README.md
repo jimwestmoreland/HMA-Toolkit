@@ -15,6 +15,8 @@ Intermittent authentication failures on mobile Outlook clients when connecting t
 | `Get-HMADiagnostics.ps1` | Comprehensive HMA configuration collection from all Exchange servers | **Step 1** - Start here for full diagnostics |
 | `Test-HmaEasNoEmptyBearer.ps1` | Tests OAuth flow without sending empty bearer tokens | **Step 2** - Validate OAuth authentication works |
 | `Check-AuthPolicyBlocking.ps1` | Quick check for Authentication Policies blocking Modern Auth | **Quick Check** - Faster than full diagnostics |
+| `Confirm-HmaUsageForUser.ps1` | User-specific HMA proof: config checks, OAuth token, Autodiscover JSON, and ActiveSync Bearer validation | **Proof for one user** - Use when you need to confirm HMA works for a specific mailbox |
+| `Get-HmaUsageAuditForUser.ps1` | Correlates Entra sign-in logs with Exchange ActiveSync/HttpProxy/IIS logs | **Audit one user** - Use when you need evidence a user/device actually used HMA |
 | `Detect-ProxyAndSSLIssues.ps1` | Comprehensive proxy interference and SSL inspection detection | **Step 3** - When OAuth issues persist |
 | `Stale-OAuth-Remediation.ps1` | Diagnose and fix stale OAuth certificate cache issues | **Step 4** - When "different certificate" errors detected |
 | `Diagnose-AuthServerIssues.ps1` | Analyze Auth Server configuration (deprecated ACS, custom endpoints) | **Step 5** - When Auth Servers have empty caches or unreachable endpoints |
@@ -166,6 +168,96 @@ Based on the MFA detection from Step 1:
 - Token acquisition from Azure AD
 - Token acceptance by Exchange on-premises
 - ActiveSync connectivity with OAuth
+
+### Step 2A: Confirm HMA for One User
+
+Use this when the question is "is this specific user able to use HMA?" rather
+than "does ActiveSync connect at all?"
+
+Run after Step 1, alongside or instead of the general Step 2 connectivity test
+when investigating a specific mailbox. Use Exchange Management Shell to include
+configuration checks; unavailable Exchange checks are skipped on a workstation.
+If the flow fails, continue to Step 3 and the relevant checks in Steps 4 and 5.
+
+```powershell
+.\Confirm-HmaUsageForUser.ps1 -EmailAddress "user@contoso.com" `
+    -ExchangeServer "mail.contoso.com" `
+    -TenantId "contoso.onmicrosoft.com" `
+    -UseDeviceCode `
+    -Verbose `
+    -OutputPath "C:\Logs\Confirm-HMA-user.log"
+```
+
+**What it validates:**
+- Exchange organization HMA switch (`OAuth2ClientProfileEnabled`) when Exchange cmdlets are available
+- EvoSTS/AuthServer default authorization endpoint when Exchange cmdlets are available
+- User ActiveSync and authentication-policy blockers when Exchange cmdlets are available
+- OAuth token acquisition as the target user using the Outlook mobile public client
+- Autodiscover JSON accepts a Bearer token and returns the ActiveSync endpoint
+- ActiveSync accepts the Bearer token via `OPTIONS`
+- Optional FolderSync reaches command processing; HTTP 449 device provisioning is treated as expected proof for a synthetic device
+
+FolderSync is attempted automatically after successful ActiveSync `OPTIONS`;
+there is no switch to skip it. This is an active test, not a historical usage
+audit. Exit codes are `0` for a successful command test, `2` for incomplete
+command validation, and `1` for failure. Review the configuration checks and
+final summary rather than relying on the exit code alone.
+
+Passing this script confirms the user-specific HMA path works. To prove a
+particular already-enrolled phone is currently using HMA, correlate the script
+timestamp with Microsoft Entra sign-in logs and Exchange HttpProxy/IIS
+ActiveSync logs for the same user/device.
+
+### Step 2B: Audit Whether One User Actually Used HMA
+
+Use this when the question is "did this user/device actually connect through
+the HMA path during a real sync window?"
+
+Use after Step 2/2A passes but enrolled-client behavior is still uncertain, or
+collect evidence around an intermittent failure before Step 3. This script reads
+existing logs; it does not initiate a device sync or replace the active test.
+Use explicit UTC timestamps when comparing evidence from multiple servers.
+
+```powershell
+.\Get-HmaUsageAuditForUser.ps1 -UserPrincipalName "user@contoso.com" `
+    -StartTime (Get-Date).AddHours(-8) `
+    -EndTime (Get-Date) `
+    -ExchangeLogPath "C:\Program Files\Microsoft\Exchange Server\V15\Logging" `
+    -Verbose `
+    -CsvOutputPath "C:\Logs\HMA-usage-audit-user.csv"
+```
+
+**What it audits:**
+- Microsoft Entra sign-in logs for successful modern-auth Exchange/Outlook sign-ins
+- Exchange ActiveSync/HttpProxy/IIS logs for the same user and time window
+- Whether server-side ActiveSync traffic exists without matching Entra modern-auth evidence
+
+**Verdict meanings:**
+- `CONFIRMED_OR_STRONG` - successful Entra modern-auth Exchange/Outlook sign-in plus matching ActiveSync server traffic
+- `INCONCLUSIVE_MODERN_SIGNIN_ONLY` - Entra modern-auth sign-in found, but matching server logs were not found/provided
+- `LEGACY_OR_UNCONFIRMED` - ActiveSync server traffic found without matching Entra modern-auth sign-in evidence
+- `NO_EVIDENCE` - neither Entra modern-auth sign-in nor ActiveSync server traffic was found
+
+Microsoft Graph sign-in log access requires `AuditLog.Read.All`. If the script
+runs on an Exchange server, point `-ExchangeLogPath` at the local `V15\Logging`
+folder. From an admin workstation, pass UNC paths to the Exchange servers'
+`HttpProxy\Eas`, `HttpProxy\Autodiscover`, or IIS `W3SVC` log folders.
+
+Use Microsoft Graph PowerShell, or the Azure CLI fallback with an authenticated
+account authorized to read sign-in logs. The Graph PowerShell connection requests
+`AuditLog.Read.All` and `Directory.Read.All`. `-OutputPath` saves the audit log;
+`-CsvOutputPath` saves the evidence timeline.
+
+`-SkipGraph` and `-SkipExchangeLogs` support single-source investigation, but
+cannot prove end-to-end HMA. The current script can return `CONFIRMED_OR_STRONG`
+with `-SkipExchangeLogs`; treat that as Entra-only evidence, not confirmation
+of on-premises traffic. Correlation is by user and time window, not a unique
+device/session identifier. Review timestamps, clients, IPs, and server-side
+authentication evidence before attributing a finding to a specific phone.
+Missing sign-ins alone do not prove Basic authentication.
+
+Exit codes are `0` for `CONFIRMED_OR_STRONG`, `2` for inconclusive/unconfirmed
+results, and `1` for no evidence or an execution error.
 
 ### Step 3: Check for Proxy Interference
 
@@ -332,6 +424,58 @@ Connect-MsolService
 - Detailed HTTP request/response logging
 - JWT token decoding and claim analysis
 - Error code analysis with recommendations
+
+### Confirm-HmaUsageForUser.ps1
+- Focused proof for one mailbox/user
+- Lists the observed HMA sequence when it works
+- Emits detailed request/response debug output without writing tokens to the log
+- Checks Exchange org/user/vDir configuration when run from Exchange Management Shell
+- Uses Device Code flow for MFA-capable user validation
+
+### Get-HmaUsageAuditForUser.ps1
+- Correlates Microsoft Entra sign-in records and Exchange server logs
+- Flags modern-auth Exchange/Outlook sign-ins by app/resource/client-app evidence
+- Parses W3C-style Exchange HttpProxy and IIS logs for matching ActiveSync user traffic
+- Exports a CSV evidence timeline for escalation or customer review
+- Does not require credentials for Exchange log parsing; Graph audit lookup requires sign-in/log-reader permissions
+
+### Token acquisition says success but token fields are blank
+
+Blank `Token type` and `Expires in` followed by `Could not decode token claims:
+You cannot call a method on a null-valued expression` means the response did not
+contain an access token. Older versions reported success whenever the HTTP request
+completed, even if the response was not a valid OAuth token response.
+
+Both ROPC and Device Code flows now validate `access_token`, `token_type` (`Bearer`),
+and a positive `expires_in` before reporting success or attempting token decoding.
+Invalid responses fail token acquisition with the endpoint, response type, and
+missing/invalid field names. Raw response bodies are not included in these
+validation errors to avoid exposing credentials or tokens. `Resource` and `Scope`
+are optional response fields; their absence alone is not a failure.
+
+Use the updated script and review its token-acquisition error. A proxy, SSL
+inspection appliance, or sign-in page returning unexpected content is a possible
+cause, not a conclusion from the blank fields alone. Check the network path to
+`login.microsoftonline.com` and correlate any Entra error with the sign-in logs.
+Do not share access tokens, refresh tokens, passwords, or full token responses.
+
+Offline regression tests (no credentials, network requests, or module installs):
+
+```powershell
+.\tests\Test-OAuthTokenResponse.ps1
+```
+
+### tests\Test-OAuthTokenResponse.ps1
+
+This is a maintainer validation tool, not another live troubleshooting step.
+Run after changes to token acquisition, before distributing the Step 2 script.
+It extracts the authentication functions without executing the interactive main
+script and uses mocked responses: no credentials, network calls, or module
+installation are required.
+
+- Covers valid, missing, malformed, and error responses in both authentication flows
+- Checks validation diagnostics, Device Code polling, and resource fallback
+- Supports Windows PowerShell 5.1 and PowerShell 7
 
 ### Detect-ProxyAndSSLIssues.ps1
 - **Comprehensive proxy and SSL inspection detection**
